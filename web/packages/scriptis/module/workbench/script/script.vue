@@ -52,10 +52,15 @@
                 @click.native="showPanelTab(comp.name)" />
             </template>
           </div>
+          <span class="workbench-tab-full-btn" @click="configLogPanel">
+            <Icon :type="scriptViewState.bottomPanelFull?'md-contract':'md-expand'" />
+            {{ scriptViewState.bottomPanelFull ? $t('message.scripts.constants.logPanelList.releaseFullScreen') : $t('message.scripts.constants.logPanelList.fullScreen') }}
+          </span>
         </div>
         <div class="workbench-container">
           <we-progress
             v-if="bottomTab.show_progress"
+            ref="progressTab"
             :script="script"
             :script-view-state="scriptViewState"
             :execute="execute"
@@ -595,9 +600,7 @@ export default {
           this.dispatch('IndexedDB:recordTab', { ...this.work, userName: this.userName });
           cb && cb('start');
         });
-        this.execute.on('updateResource', (num) => {
-          this.dispatch('Footer:updateRunningJob', num);
-        });
+
         this.execute.on('log', (logs) => {
           let hasLogInfo = Array.isArray(logs) ? logs.some((it) => it.length > 0) : logs;
           if (!hasLogInfo) {
@@ -680,6 +683,19 @@ export default {
               tabId: this.script.id,
               ...this.script.history,
             });
+          }
+          // 有错误码停留进度tab，无错误码打开日志定位第一行错误
+          if (this.$refs.progressTab) {
+            this.$refs.progressTab.updateErrorMsg({
+              solution: ret.solution,
+              errDesc: ret.errDesc,
+              errCode: ret.errCode,
+              status: ret.status,
+              taskId: ret.taskID
+            })
+          }
+          if (!ret.errCode && ret.status == 'Failed') {
+            this.showPanelTab('log')
           }
         });
         this.execute.on('result', (ret) => {
@@ -821,10 +837,10 @@ export default {
         this.execute.on('error', (type) => {
           // 执行错误的时候resolve，用于改变modal框中的loading状态
           cb && cb(type || 'error');
-          if (this.scriptViewState.showPanel !== 'history') {
-            this.showPanelTab('history');
-            this.isLogShow = true;
-          }
+          // if (this.scriptViewState.showPanel !== 'history') {
+          //   this.showPanelTab('history');
+          //   this.isLogShow = true;
+          // }
           this.dispatch('IndexedDB:appendLog', {
             tabId: this.script.id,
             rst: this.script.log,
@@ -894,29 +910,7 @@ export default {
                   'word-break': 'break-all',
                   'line-height': '20px',
                 },
-              }, label),
-              h('span',{
-                style: {
-                  color: 'red',
-                  position: 'absolute',
-                  right: '10px',
-                  bottom: '0px',
-                  display: 'none',
-                  cursor: 'pointer'
-                },
-                on: {
-                  click: () => {
-                    if (type === 'error') {
-                      // 先根据执行的最新的任务记录获取错误码后查询是否有贴
-                      const failedReason = this.work.data.history[0].failedReason
-                      const errorCode = parseInt(failedReason) || '';
-                      const errorDesc = failedReason.substring(errorCode.toString().length, failedReason.length)
-                      this.checkErrorCode(errorCode, errorDesc);
-                    }
-                  }
-                }
-              }, '发布提问')
-              ])
+              }, label)])
             },
           });
         });
@@ -928,30 +922,6 @@ export default {
           });
         });
       }
-    },
-    checkErrorCode(errorCode, errorDesc) {
-      api.fetch('/kn/isErrorDuplicate', {
-        errorCode
-      }, 'get').then((res) => {
-        if (res.isDuplicate) {
-          // 如果有就打开新浏览器跳转
-        } else {
-          // 没有就发帖
-          this.postMessage(errorCode, errorDesc);
-        }
-      })
-    },
-    // 发帖
-    postMessage(errorCode, errorDesc) {
-      api.fetch('/kn/posting', {
-        title: `errorDesc问题讨论`,
-        content: {
-          errorCode,
-          errorDesc
-        }
-      }, 'post').then((res) => {
-        window.console.log(res, '发帖成功')
-      })
     },
     resetData() {
       // upgrade only one time
@@ -1154,10 +1124,18 @@ export default {
       }
       this.debounceLocalLogShow();
     },
-    configLogPanel(name) {
+    configLogPanel() {
+      let bottomContentHeight
+      if (this.scriptViewState.bottomPanelFull) {
+        bottomContentHeight = this._last_bottom_panel_height
+      } else {
+        this._last_bottom_panel_height = this.scriptViewState.bottomContentHeight
+        bottomContentHeight = this.$el.clientHeight + 30
+      }
       this.scriptViewState = {
         ...this.scriptViewState,
-        bottomPanelFull: name == 'fullScreen'
+        bottomContentHeight,
+        bottomPanelFull: !this.scriptViewState.bottomPanelFull
       }
     },
     changeResultSet(data, cb) {
@@ -1395,36 +1373,46 @@ export default {
   @import '@dataspherestudio/shared/common/style/variables.scss';
   .editor-panel {
     position: relative;
-  .script-line{
-    position: absolute;
-    width: 100%;
-    height: 6px;
-    left: 0;
-    bottom: -2px;
-    z-index: 3;
-    border-bottom: 1px solid #dcdee2;
-  @include border-color($border-color-base, $dark-base-color);
-  @include bg-color($light-base-color, $dark-base-color);
-    cursor: ns-resize;
-  }
-  &.full-screen {
-     top: 54px !important;
-     right: 0;
-     bottom: 0;
-     left: 0;
-     position: fixed;
-     z-index: 100;
-     background-color: #fff;
-     height: 100% !important;
-   }
-  .new-sidebar-spin {
-  @include bg-color(rgba(255, 255, 255, .1), rgba(0, 0, 0, 0.5));
-  }
+    .script-line {
+      position: absolute;
+      width: 100%;
+      height: 6px;
+      left: 0;
+      bottom: -2px;
+      z-index: 3;
+      border-bottom: 1px solid #dcdee2;
+      @include border-color($border-color-base, $dark-base-color);
+      @include bg-color($light-base-color, $dark-base-color);
+      cursor: ns-resize;
+    }
+    &.full-screen {
+      top: 54px !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      left: 0 !important;
+      position: fixed;
+      z-index: 9999;
+      background-color: #fff;
+      height: 100% !important;
+    }
+    .new-sidebar-spin {
+      @include bg-color(rgba(255, 255, 255, .1), rgba(0, 0, 0, 0.5));
+    }
   }
   .log-panel {
     border-top: $border-width-base $border-style-base $border-color-base;
     @include border-color($border-color-base, $dark-border-color-base);
     @include bg-color($light-base-color, $dark-base-color);
+    &.full-screen {
+      top: 54px !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      left: 0 !important;
+      position: fixed;
+      z-index: 9999;
+      background-color: #fff;
+      height: 100% !important;
+    }
     .workbench-tabs {
       position: $relative;
       height: 100%;
@@ -1486,6 +1474,16 @@ export default {
               border-top: 1px solid $border-color-base;
               @include border-color($border-color-base, $dark-border-color-base);
             }
+          }
+        }
+        .workbench-tab-full-btn {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          padding-right: 8px;
+          cursor: pointer;
+          &:hover {
+            @include font-color($primary-color, $dark-primary-color);
           }
         }
       }
